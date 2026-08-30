@@ -1,0 +1,174 @@
+---
+title: "mpdw"
+author: "zul"
+date: "2026-08-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#===============================================================================
+# ANALISIS METODE PEMULUSAN (SMOOTHING) DATA TIME SERIES BITCOIN
+# Bagian Data: Zul Padli Yanshah (Periode 800 - 1000)
+#===============================================================================
+# Cara pakai:
+# 1. Letakkan script ini satu folder dengan file
+#    "Bitcoin_1000_Period_clean_zfd.csv"
+# 2. Set folder tersebut sebagai working directory, misal:
+#    setwd("~/Documents/Tugas_Smoothing")
+# 3. Jalankan script ini baris per baris atau sekaligus (Source)
+#===============================================================================
+
+# ------------------------------------------------------------------
+# 0. PERSIAPAN LIBRARY
+# ------------------------------------------------------------------
+# install.packages(c("forecast", "ggplot2"))  # jalankan sekali saja jika belum ada
+library(forecast)   # ses(), holt(), hw(), accuracy()
+library(ggplot2)    # visualisasi
+
+# ------------------------------------------------------------------
+# 1. BACA DAN SIAPKAN DATA
+# ------------------------------------------------------------------
+df <- read.csv("Bitcoin_1000_Period_clean_zfd.csv", stringsAsFactors = FALSE)
+
+# Urutkan berdasarkan Period
+df <- df[order(df$Period), ]
+
+# Ambil bagian Zul Padli Yanshah: Period 800 - 1000
+df_zul <- subset(df, Period >= 800 & Period <= 1000)
+
+cat("Jumlah observasi bagian Zul Padli Yanshah :", nrow(df_zul), "\n")
+cat("Rentang periode              :", min(df_zul$Period), "-", max(df_zul$Period), "\n")
+head(df_zul)
+
+# Ubah menjadi objek time series.
+# frequency = 7 dipakai agar metode Holt-Winters (musiman) dapat diterapkan
+# (siklus mingguan). Metode lain (SMA/DMA/SES/DES) tidak terpengaruh nilai ini.
+harga_ts <- ts(df_zul$Price, frequency = 7)
+
+# Plot data mentah
+autoplot(harga_ts) +
+  labs(title = "Data Harga Bitcoin - Bagian Zul Padli Yanshah (Periode 800-1000)",
+       x = "Waktu (indeks periode)", y = "Harga (USD)") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 2. FUNGSI METRIK AKURASI (SSE, MSE, RMSE, MAPE)
+# ------------------------------------------------------------------
+akurasi <- function(actual, fitted) {
+  idx <- !is.na(fitted) & !is.na(actual)
+  e   <- actual[idx] - fitted[idx]
+  sse  <- sum(e^2)
+  mse  <- mean(e^2)
+  rmse <- sqrt(mse)
+  mape <- mean(abs(e / actual[idx])) * 100
+  c(SSE = sse, MSE = mse, RMSE = rmse, MAPE = mape)
+}
+
+# ------------------------------------------------------------------
+# 3. METODE 1: SIMPLE MOVING AVERAGE (SMA)
+# ------------------------------------------------------------------
+m <- 5  # orde bergerak
+sma_fit <- stats::filter(harga_ts, rep(1/m, m), sides = 1)
+
+autoplot(harga_ts, series = "Aktual") +
+  autolayer(ts(sma_fit, start = start(harga_ts), frequency = 7), series = paste0("SMA(", m, ")")) +
+  labs(title = paste0("Simple Moving Average (m = ", m, ")"), y = "Harga (USD)", x = "Waktu") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 4. METODE 2: DOUBLE MOVING AVERAGE (DMA)
+# ------------------------------------------------------------------
+sma1 <- stats::filter(harga_ts, rep(1/m, m), sides = 1)
+sma2 <- stats::filter(sma1, rep(1/m, m), sides = 1)
+
+a_t <- 2 * sma1 - sma2
+b_t <- (2 / (m - 1)) * (sma1 - sma2)
+dma_fit <- a_t + b_t
+
+autoplot(harga_ts, series = "Aktual") +
+  autolayer(ts(dma_fit, start = start(harga_ts), frequency = 7), series = paste0("DMA(", m, ")")) +
+  labs(title = paste0("Double Moving Average (m = ", m, ")"), y = "Harga (USD)", x = "Waktu") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 5. METODE 3: SINGLE EXPONENTIAL SMOOTHING (SES)
+# ------------------------------------------------------------------
+ses_model <- ses(harga_ts, h = 10)
+summary(ses_model)
+
+autoplot(harga_ts, series = "Aktual") +
+  autolayer(fitted(ses_model), series = "SES") +
+  labs(title = paste0("Single Exponential Smoothing (alpha = ",
+                       round(ses_model$model$par["alpha"], 4), ")"),
+       y = "Harga (USD)", x = "Waktu") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 6. METODE 4: DOUBLE EXPONENTIAL SMOOTHING / HOLT'S LINEAR TREND (DES)
+# ------------------------------------------------------------------
+des_model <- holt(harga_ts, h = 10)
+summary(des_model)
+
+autoplot(harga_ts, series = "Aktual") +
+  autolayer(fitted(des_model), series = "DES (Holt)") +
+  labs(title = "Double Exponential Smoothing (Holt Linear Trend)",
+       y = "Harga (USD)", x = "Waktu") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 7. METODE 5: HOLT-WINTERS (TRIPLE EXPONENTIAL SMOOTHING)
+# ------------------------------------------------------------------
+hw_model <- hw(harga_ts, h = 14, seasonal = "additive")
+summary(hw_model)
+
+autoplot(harga_ts, series = "Aktual") +
+  autolayer(fitted(hw_model), series = "Holt-Winters") +
+  labs(title = "Holt-Winters (Triple Exponential Smoothing, aditif)",
+       y = "Harga (USD)", x = "Waktu") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 8. PERBANDINGAN KINERJA METODE
+# ------------------------------------------------------------------
+hasil <- rbind(
+  SMA          = akurasi(as.numeric(harga_ts), as.numeric(sma_fit)),
+  DMA          = akurasi(as.numeric(harga_ts), as.numeric(dma_fit)),
+  SES          = akurasi(as.numeric(harga_ts), as.numeric(fitted(ses_model))),
+  DES          = akurasi(as.numeric(harga_ts), as.numeric(fitted(des_model))),
+  Holt_Winters = akurasi(as.numeric(harga_ts), as.numeric(fitted(hw_model)))
+)
+
+hasil_df <- as.data.frame(round(hasil, 3))
+hasil_df$Metode <- rownames(hasil_df)
+print(hasil_df)
+
+# Grafik perbandingan RMSE antar metode
+ggplot(hasil_df, aes(x = reorder(Metode, RMSE), y = RMSE, fill = Metode)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Perbandingan RMSE Antar Metode Pemulusan",
+       x = "Metode", y = "RMSE") +
+  theme_minimal()
+
+# ------------------------------------------------------------------
+# 9. METODE TERBAIK & KESIMPULAN
+# ------------------------------------------------------------------
+metode_terbaik <- hasil_df$Metode[which.min(hasil_df$RMSE)]
+cat("\n=====================================================\n")
+cat("Metode dengan RMSE terkecil (TERBAIK):", metode_terbaik, "\n")
+cat("=====================================================\n")
+
+print(hasil_df[order(hasil_df$RMSE), c("Metode", "SSE", "MSE", "RMSE", "MAPE")])
+
+cat("\nKesimpulan singkat:\n")
+cat("- SMA & DMA cenderung tertinggal (lag) mengikuti data yang fluktuatif.\n")
+cat("- SES kurang optimal karena data memiliki tren.\n")
+cat("- DES (Holt) lebih adaptif karena memperhitungkan komponen tren.\n")
+cat("- Holt-Winters menambah komponen musiman; dipilih terbaik jika RMSE-nya\n")
+cat("  paling kecil di antara metode lain seperti hasil di atas.\n")
+```
+
